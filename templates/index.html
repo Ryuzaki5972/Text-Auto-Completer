@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Text Autocompletion</title>
+    <title>Text Auto Completer</title>
     <style>
         body {
             font-family: Arial, sans-serif;
@@ -16,51 +16,29 @@
             background-color: white;
             padding: 30px;
             border-radius: 10px;
-            box-shadow: 0 0 10px rgba(0,0,0,0.1);
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
         }
         h1 {
             color: #333;
             text-align: center;
+            margin-bottom: 30px;
         }
-        .input-section {
-            margin-bottom: 20px;
-        }
-        textarea {
-            width: 100%;
-            height: 150px;
-            padding: 10px;
-            border: 2px solid #ddd;
-            border-radius: 5px;
-            font-size: 16px;
-            resize: vertical;
-        }
-        .suggestions {
-            margin-top: 10px;
-            padding: 10px;
-            background-color: #f9f9f9;
-            border-radius: 5px;
+        .section {
+            margin-bottom: 30px;
+            padding: 20px;
             border: 1px solid #ddd;
+            border-radius: 5px;
         }
-        .suggestion {
-            display: inline-block;
-            background-color: #007bff;
-            color: white;
-            padding: 5px 10px;
-            margin: 2px;
-            border-radius: 3px;
-            cursor: pointer;
-            font-size: 14px;
+        .section h2 {
+            color: #555;
+            margin-bottom: 15px;
         }
-        .suggestion:hover {
-            background-color: #0056b3;
-        }
-        .training-section {
-            margin-top: 30px;
-            padding-top: 20px;
-            border-top: 1px solid #ddd;
+        input[type="file"] {
+            margin-bottom: 10px;
+            padding: 5px;
         }
         button {
-            background-color: #28a745;
+            background-color: #007bff;
             color: white;
             padding: 10px 20px;
             border: none;
@@ -69,11 +47,43 @@
             font-size: 16px;
         }
         button:hover {
-            background-color: #218838;
+            background-color: #0056b3;
         }
-        .status {
+        button:disabled {
+            background-color: #ccc;
+            cursor: not-allowed;
+        }
+        textarea {
+            width: 100%;
+            padding: 10px;
+            border: 1px solid #ddd;
+            border-radius: 5px;
+            font-size: 16px;
+            resize: vertical;
+        }
+        .suggestions {
             margin-top: 10px;
             padding: 10px;
+            background-color: #f8f9fa;
+            border-radius: 5px;
+            min-height: 40px;
+        }
+        .suggestion-item {
+            display: inline-block;
+            margin: 2px 5px;
+            padding: 5px 10px;
+            background-color: #007bff;
+            color: white;
+            border-radius: 15px;
+            cursor: pointer;
+            font-size: 14px;
+        }
+        .suggestion-item:hover {
+            background-color: #0056b3;
+        }
+        .status {
+            padding: 10px;
+            margin: 10px 0;
             border-radius: 5px;
         }
         .status.success {
@@ -86,133 +96,221 @@
             color: #721c24;
             border: 1px solid #f5c6cb;
         }
+        .model-info {
+            background-color: #e9ecef;
+            padding: 15px;
+            border-radius: 5px;
+            margin-bottom: 20px;
+        }
     </style>
 </head>
 <body>
     <div class="container">
-        <h1>Text Autocompletion System</h1>
+        <h1>🤖 Text Auto Completer</h1>
         
-        <div class="input-section">
-            <h3>Type your text:</h3>
-            <textarea id="textInput" placeholder="Start typing and see suggestions appear below..."></textarea>
+        <!-- Model Status -->
+        <div class="model-info">
+            <h3>📊 Model Status</h3>
+            <div id="model-status">
+                {% if autocompleter.is_trained %}
+                    <span style="color: green;">✅ Model is trained and ready!</span>
+                    <br>
+                    <small>
+                        Vocabulary: {{ autocompleter.unigram_model|length }} words |
+                        Bigrams: {{ autocompleter.bigram_model|length }} |
+                        Trigrams: {{ autocompleter.trigram_model|length }}
+                    </small>
+                {% else %}
+                    <span style="color: orange;">⚠️ Model not trained. Please upload training data.</span>
+                {% endif %}
+            </div>
+        </div>
+
+        <!-- Training Section -->
+        <div class="section">
+            <h2>📚 Train Model</h2>
+            <p>Upload a CSV file with a 'text' column to train the autocompleter:</p>
+            
+            <form id="upload-form" enctype="multipart/form-data">
+                <input type="file" id="file-input" name="file" accept=".csv" required>
+                <br>
+                <button type="submit" id="train-btn">Train Model</button>
+            </form>
+            
+            <div id="training-status"></div>
+        </div>
+
+        <!-- Text Completion Section -->
+        <div class="section">
+            <h2>✍️ Text Completion</h2>
+            <p>Start typing to get word suggestions:</p>
+            
+            <textarea 
+                id="text-input" 
+                placeholder="Start typing here..."
+                rows="4"
+                {% if not autocompleter.is_trained %}disabled{% endif %}
+            ></textarea>
             
             <div class="suggestions">
-                <strong>Suggestions:</strong>
-                <div id="suggestionsList">
+                <div id="suggestions-container">
                     {% if not autocompleter.is_trained %}
-                    <p>Please train the model first by uploading training data below.</p>
+                        <em>Please train the model first to get suggestions.</em>
                     {% else %}
-                    <p>Start typing to see suggestions...</p>
+                        <em>Start typing to see suggestions...</em>
                     {% endif %}
                 </div>
             </div>
         </div>
-
-        <div class="training-section">
-            <h3>Train Model</h3>
-            <p>Upload a CSV file with a 'text' column to train the autocompletion model:</p>
-            <input type="file" id="fileInput" accept=".csv">
-            <button onclick="uploadFile()">Train Model</button>
-            <div id="status"></div>
-        </div>
     </div>
 
     <script>
-        let debounceTimer;
-        const textInput = document.getElementById('textInput');
-        const suggestionsList = document.getElementById('suggestionsList');
-
-        textInput.addEventListener('input', function() {
-            clearTimeout(debounceTimer);
-            debounceTimer = setTimeout(getSuggestions, 300);
-        });
-
-        function getSuggestions() {
-            const text = textInput.value;
-            if (text.trim() === '') {
-                suggestionsList.innerHTML = '<p>Start typing to see suggestions...</p>';
+        // File upload handling
+        document.getElementById('upload-form').addEventListener('submit', async function(e) {
+            e.preventDefault();
+            
+            const fileInput = document.getElementById('file-input');
+            const trainBtn = document.getElementById('train-btn');
+            const statusDiv = document.getElementById('training-status');
+            
+            if (!fileInput.files[0]) {
+                showStatus('Please select a file', 'error');
                 return;
             }
-
-            fetch('/complete', {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                },
-                body: JSON.stringify({text: text})
-            })
-            .then(response => response.json())
-            .then(data => {
-                if (data.suggestions && data.suggestions.length > 0) {
-                    suggestionsList.innerHTML = data.suggestions.map(word => 
-                        `<span class="suggestion" onclick="addWord('${word}')">${word}</span>`
-                    ).join(' ');
+            
+            const formData = new FormData();
+            formData.append('file', fileInput.files[0]);
+            
+            trainBtn.disabled = true;
+            trainBtn.textContent = 'Training...';
+            showStatus('Uploading and training model...', 'info');
+            
+            try {
+                const response = await fetch('/train', {
+                    method: 'POST',
+                    body: formData
+                });
+                
+                const result = await response.json();
+                
+                if (result.success) {
+                    showStatus(result.message, 'success');
+                    // Refresh page to update model status
+                    setTimeout(() => location.reload(), 2000);
                 } else {
-                    suggestionsList.innerHTML = '<p>No suggestions found.</p>';
+                    showStatus(result.error || 'Training failed', 'error');
                 }
-            })
-            .catch(error => {
-                console.error('Error:', error);
-                suggestionsList.innerHTML = '<p>Error getting suggestions.</p>';
+            } catch (error) {
+                showStatus('Error uploading file: ' + error.message, 'error');
+            } finally {
+                trainBtn.disabled = false;
+                trainBtn.textContent = 'Train Model';
+            }
+        });
+
+        // Text completion handling
+        const textInput = document.getElementById('text-input');
+        const suggestionsContainer = document.getElementById('suggestions-container');
+        let completionTimeout;
+
+        if (textInput) {
+            textInput.addEventListener('input', function() {
+                clearTimeout(completionTimeout);
+                completionTimeout = setTimeout(getSuggestions, 300);
             });
+        }
+
+        async function getSuggestions() {
+            const text = textInput.value;
+            
+            if (text.trim() === '') {
+                suggestionsContainer.innerHTML = '<em>Start typing to see suggestions...</em>';
+                return;
+            }
+            
+            try {
+                const response = await fetch('/complete', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({ text: text })
+                });
+                
+                const result = await response.json();
+                
+                if (result.suggestions && result.suggestions.length > 0) {
+                    suggestionsContainer.innerHTML = result.suggestions
+                        .map(word => `<span class="suggestion-item" onclick="addWord('${word}')">${word}</span>`)
+                        .join('');
+                } else {
+                    suggestionsContainer.innerHTML = '<em>No suggestions available</em>';
+                }
+                
+                if (result.error) {
+                    suggestionsContainer.innerHTML = `<em>Error: ${result.error}</em>`;
+                }
+            } catch (error) {
+                suggestionsContainer.innerHTML = '<em>Error getting suggestions</em>';
+            }
         }
 
         function addWord(word) {
             const currentText = textInput.value;
-            let newText;
+            const words = currentText.split(' ');
             
             if (currentText.endsWith(' ')) {
-                // Add word after space
-                newText = currentText + word + ' ';
+                // Add new word
+                textInput.value = currentText + word + ' ';
             } else {
                 // Replace last partial word
-                const words = currentText.split(' ');
                 words[words.length - 1] = word;
-                newText = words.join(' ') + ' ';
+                textInput.value = words.join(' ') + ' ';
             }
             
-            textInput.value = newText;
             textInput.focus();
             getSuggestions();
         }
 
-        function uploadFile() {
-            const fileInput = document.getElementById('fileInput');
-            const statusDiv = document.getElementById('status');
-            
-            if (!fileInput.files[0]) {
-                showStatus('Please select a file first.', 'error');
-                return;
-            }
-
-            const formData = new FormData();
-            formData.append('file', fileInput.files[0]);
-
-            showStatus('Training model... This may take a few minutes.', 'success');
-
-            fetch('/train', {
-                method: 'POST',
-                body: formData
-            })
-            .then(response => response.json())
-            .then(data => {
-                if (data.success) {
-                    showStatus('Model trained successfully!', 'success');
-                    suggestionsList.innerHTML = '<p>Start typing to see suggestions...</p>';
-                } else {
-                    showStatus('Error training model: ' + data.error, 'error');
-                }
-            })
-            .catch(error => {
-                console.error('Error:', error);
-                showStatus('Error uploading file.', 'error');
-            });
-        }
-
         function showStatus(message, type) {
-            const statusDiv = document.getElementById('status');
+            const statusDiv = document.getElementById('training-status');
             statusDiv.innerHTML = `<div class="status ${type}">${message}</div>`;
+            
+            if (type === 'success') {
+                setTimeout(() => {
+                    statusDiv.innerHTML = '';
+                }, 5000);
+            }
         }
+
+        // Update model status periodically
+        setInterval(async function() {
+            try {
+                const response = await fetch('/status');
+                const status = await response.json();
+                
+                const modelStatusDiv = document.getElementById('model-status');
+                if (status.is_trained) {
+                    modelStatusDiv.innerHTML = `
+                        <span style="color: green;">✅ Model is trained and ready!</span>
+                        <br>
+                        <small>
+                            Vocabulary: ${status.unigram_size} words |
+                            Bigrams: ${status.bigram_size} |
+                            Trigrams: ${status.trigram_size}
+                        </small>
+                    `;
+                    
+                    // Enable text input if it was disabled
+                    textInput.disabled = false;
+                    suggestionsContainer.innerHTML = '<em>Start typing to see suggestions...</em>';
+                } else {
+                    modelStatusDiv.innerHTML = '<span style="color: orange;">⚠️ Model not trained. Please upload training data.</span>';
+                }
+            } catch (error) {
+                console.log('Error checking model status:', error);
+            }
+        }, 10000); // Check every 10 seconds
     </script>
 </body>
 </html>
