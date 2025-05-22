@@ -60,6 +60,7 @@
             border-radius: 5px;
             font-size: 16px;
             resize: vertical;
+            box-sizing: border-box;
         }
         .suggestions {
             margin-top: 10px;
@@ -96,6 +97,11 @@
             color: #721c24;
             border: 1px solid #f5c6cb;
         }
+        .status.info {
+            background-color: #cce7ff;
+            color: #004085;
+            border: 1px solid #b3d9ff;
+        }
         .model-info {
             background-color: #e9ecef;
             padding: 15px;
@@ -112,17 +118,7 @@
         <div class="model-info">
             <h3>📊 Model Status</h3>
             <div id="model-status">
-                {% if autocompleter.is_trained %}
-                    <span style="color: green;">✅ Model is trained and ready!</span>
-                    <br>
-                    <small>
-                        Vocabulary: {{ autocompleter.unigram_model|length }} words |
-                        Bigrams: {{ autocompleter.bigram_model|length }} |
-                        Trigrams: {{ autocompleter.trigram_model|length }}
-                    </small>
-                {% else %}
-                    <span style="color: orange;">⚠️ Model not trained. Please upload training data.</span>
-                {% endif %}
+                Loading model status...
             </div>
         </div>
 
@@ -149,22 +145,34 @@
                 id="text-input" 
                 placeholder="Start typing here..."
                 rows="4"
-                {% if not autocompleter.is_trained %}disabled{% endif %}
             ></textarea>
             
             <div class="suggestions">
                 <div id="suggestions-container">
-                    {% if not autocompleter.is_trained %}
-                        <em>Please train the model first to get suggestions.</em>
-                    {% else %}
-                        <em>Start typing to see suggestions...</em>
-                    {% endif %}
+                    <em>Loading...</em>
                 </div>
             </div>
         </div>
     </div>
 
     <script>
+        // Helper function to safely parse JSON response
+        async function safeJsonParse(response) {
+            const text = await response.text();
+            console.log('Response text:', text);
+            
+            if (!text) {
+                throw new Error('Empty response from server');
+            }
+            
+            try {
+                return JSON.parse(text);
+            } catch (e) {
+                console.log('Failed to parse JSON:', e);
+                throw new Error(`Server returned invalid JSON: ${text.substring(0, 200)}...`);
+            }
+        }
+
         // File upload handling
         document.getElementById('upload-form').addEventListener('submit', async function(e) {
             e.preventDefault();
@@ -186,22 +194,32 @@
             showStatus('Uploading and training model...', 'info');
             
             try {
+                console.log('Sending training request...');
                 const response = await fetch('/train', {
                     method: 'POST',
                     body: formData
                 });
                 
-                const result = await response.json();
+                console.log('Response status:', response.status);
+                console.log('Response headers:', [...response.headers.entries()]);
+                
+                if (!response.ok) {
+                    throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+                }
+                
+                const result = await safeJsonParse(response);
+                console.log('Training result:', result);
                 
                 if (result.success) {
                     showStatus(result.message, 'success');
-                    // Refresh page to update model status
-                    setTimeout(() => location.reload(), 2000);
+                    // Refresh model status
+                    setTimeout(updateModelStatus, 1000);
                 } else {
                     showStatus(result.error || 'Training failed', 'error');
                 }
             } catch (error) {
-                showStatus('Error uploading file: ' + error.message, 'error');
+                console.error('Training error:', error);
+                showStatus('Error: ' + error.message, 'error');
             } finally {
                 trainBtn.disabled = false;
                 trainBtn.textContent = 'Train Model';
@@ -237,7 +255,11 @@
                     body: JSON.stringify({ text: text })
                 });
                 
-                const result = await response.json();
+                if (!response.ok) {
+                    throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+                }
+                
+                const result = await safeJsonParse(response);
                 
                 if (result.suggestions && result.suggestions.length > 0) {
                     suggestionsContainer.innerHTML = result.suggestions
@@ -251,7 +273,8 @@
                     suggestionsContainer.innerHTML = `<em>Error: ${result.error}</em>`;
                 }
             } catch (error) {
-                suggestionsContainer.innerHTML = '<em>Error getting suggestions</em>';
+                console.error('Suggestion error:', error);
+                suggestionsContainer.innerHTML = `<em>Error getting suggestions: ${error.message}</em>`;
             }
         }
 
@@ -283,11 +306,16 @@
             }
         }
 
-        // Update model status periodically
-        setInterval(async function() {
+        // Update model status
+        async function updateModelStatus() {
             try {
                 const response = await fetch('/status');
-                const status = await response.json();
+                
+                if (!response.ok) {
+                    throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+                }
+                
+                const status = await safeJsonParse(response);
                 
                 const modelStatusDiv = document.getElementById('model-status');
                 if (status.is_trained) {
@@ -301,16 +329,31 @@
                         </small>
                     `;
                     
-                    // Enable text input if it was disabled
+                    // Enable text input and update suggestions
                     textInput.disabled = false;
-                    suggestionsContainer.innerHTML = '<em>Start typing to see suggestions...</em>';
+                    textInput.placeholder = "Start typing here...";
+                    if (textInput.value.trim() === '') {
+                        suggestionsContainer.innerHTML = '<em>Start typing to see suggestions...</em>';
+                    }
                 } else {
                     modelStatusDiv.innerHTML = '<span style="color: orange;">⚠️ Model not trained. Please upload training data.</span>';
+                    textInput.disabled = true;
+                    textInput.placeholder = "Please train the model first...";
+                    suggestionsContainer.innerHTML = '<em>Please train the model first to get suggestions.</em>';
                 }
             } catch (error) {
-                console.log('Error checking model status:', error);
+                console.error('Error checking model status:', error);
+                document.getElementById('model-status').innerHTML = 
+                    `<span style="color: red;">❌ Error checking model status: ${error.message}</span>`;
             }
-        }, 10000); // Check every 10 seconds
+        }
+
+        // Initialize model status on page load
+        document.addEventListener('DOMContentLoaded', function() {
+            updateModelStatus();
+            // Check status periodically
+            setInterval(updateModelStatus, 10000);
+        });
     </script>
 </body>
 </html>
