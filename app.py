@@ -5,6 +5,7 @@ import os
 import tempfile
 import traceback
 import sys
+import glob
 
 app = Flask(__name__)
 
@@ -35,43 +36,65 @@ def complete_text():
         traceback.print_exc()
         return jsonify({'suggestions': [], 'error': str(e)})
 
+def load_chunk_files():
+    """Load all chunk files from dataset folder"""
+    dataset_folder = 'dataset'
+    
+    if not os.path.exists(dataset_folder):
+        raise FileNotFoundError(f'Dataset folder not found at {dataset_folder}')
+    
+    # Find all chunk files (chunk_1.csv, chunk_2.csv, etc.)
+    chunk_pattern = os.path.join(dataset_folder, 'chunk_*.csv')
+    chunk_files = sorted(glob.glob(chunk_pattern), key=lambda x: int(x.split('chunk_')[1].split('.')[0]))
+    
+    if not chunk_files:
+        raise FileNotFoundError(f'No chunk files found in {dataset_folder}. Expected files like chunk_1.csv, chunk_2.csv, etc.')
+    
+    print(f"Found {len(chunk_files)} chunk files: {[os.path.basename(f) for f in chunk_files]}", file=sys.stderr)
+    
+    all_texts = []
+    total_rows = 0
+    
+    for chunk_file in chunk_files:
+        try:
+            print(f"Loading {os.path.basename(chunk_file)}...", file=sys.stderr)
+            df = pd.read_csv(chunk_file)
+            
+            # Check for required column in first chunk
+            if len(all_texts) == 0 and 'text' not in df.columns:
+                available_cols = ', '.join(df.columns.tolist())
+                raise ValueError(f'CSV files must contain a "text" column. Available columns in {os.path.basename(chunk_file)}: {available_cols}')
+            
+            # Extract text data
+            if 'text' in df.columns:
+                chunk_texts = df['text'].dropna().astype(str).tolist()
+                all_texts.extend(chunk_texts)
+                total_rows += len(df)
+                print(f"  - Loaded {len(chunk_texts)} texts from {os.path.basename(chunk_file)}", file=sys.stderr)
+            else:
+                print(f"  - Warning: {os.path.basename(chunk_file)} missing 'text' column, skipping", file=sys.stderr)
+                
+        except Exception as e:
+            print(f"Error loading {chunk_file}: {str(e)}", file=sys.stderr)
+            continue
+    
+    print(f"Total texts loaded: {len(all_texts)} from {len(chunk_files)} chunks", file=sys.stderr)
+    return all_texts, len(chunk_files), total_rows
+
 @app.route('/train', methods=['POST'])
 def train_model():
     try:
         print("Training request received", file=sys.stderr)
         
-        # Use the pre-existing CSV file
-        csv_path = os.path.join('dataset', 'data.csv')
-        
-        if not os.path.exists(csv_path):
-            error_msg = f'Dataset file not found at {csv_path}'
-            print(error_msg, file=sys.stderr)
-            return jsonify({'success': False, 'error': error_msg})
-        
         try:
-            print(f"Reading CSV file from {csv_path}...", file=sys.stderr)
-            df = pd.read_csv(csv_path)
-            print(f"CSV loaded with shape: {df.shape}", file=sys.stderr)
-            print(f"Columns: {df.columns.tolist()}", file=sys.stderr)
-        except Exception as csv_error:
-            print(f"CSV reading error: {str(csv_error)}", file=sys.stderr)
-            traceback.print_exc()
-            return jsonify({'success': False, 'error': f'Error reading CSV: {str(csv_error)}'})
-        
-        # Check for required column
-        if 'text' not in df.columns:
-            available_cols = ', '.join(df.columns.tolist())
-            error_msg = f'CSV must contain a "text" column. Available columns: {available_cols}'
-            print(error_msg, file=sys.stderr)
+            texts, chunk_count, total_rows = load_chunk_files()
+        except Exception as load_error:
+            error_msg = str(load_error)
+            print(f"Error loading chunk files: {error_msg}", file=sys.stderr)
             return jsonify({'success': False, 'error': error_msg})
-        
-        # Prepare training data
-        print("Preparing training data...", file=sys.stderr)
-        texts = df['text'].dropna().astype(str).tolist()
-        print(f"Found {len(texts)} text samples", file=sys.stderr)
         
         if len(texts) < 10:
-            error_msg = f'Need at least 10 text samples to train. Found {len(texts)} samples.'
+            error_msg = f'Need at least 10 text samples to train. Found {len(texts)} samples across {chunk_count} chunks.'
             print(error_msg, file=sys.stderr)
             return jsonify({'success': False, 'error': error_msg})
         
@@ -88,7 +111,7 @@ def train_model():
         except Exception as save_error:
             print(f"Warning: Could not save model to disk: {save_error}", file=sys.stderr)
         
-        success_msg = f'Model trained successfully on {len(texts)} text samples from dataset/data.csv'
+        success_msg = f'Model trained successfully on {len(texts)} text samples from {chunk_count} chunk files'
         print(success_msg, file=sys.stderr)
         return jsonify({'success': True, 'message': success_msg})
     
@@ -101,9 +124,11 @@ def train_model():
 @app.route('/status')
 def model_status():
     try:
-        # Check if dataset file exists
-        csv_path = os.path.join('dataset', 'data.csv')
-        dataset_exists = os.path.exists(csv_path)
+        # Check dataset files
+        dataset_folder = 'dataset'
+        chunk_pattern = os.path.join(dataset_folder, 'chunk_*.csv')
+        chunk_files = glob.glob(chunk_pattern)
+        dataset_exists = len(chunk_files) > 0
         
         return jsonify({
             'is_trained': autocompleter.is_trained,
@@ -111,7 +136,8 @@ def model_status():
             'bigram_size': len(autocompleter.bigram_model),
             'trigram_size': len(autocompleter.trigram_model),
             'dataset_exists': dataset_exists,
-            'dataset_path': csv_path
+            'chunk_count': len(chunk_files),
+            'chunk_files': [os.path.basename(f) for f in sorted(chunk_files, key=lambda x: int(x.split('chunk_')[1].split('.')[0]))]
         })
     except Exception as e:
         print(f"Status error: {str(e)}", file=sys.stderr)
@@ -121,6 +147,8 @@ def model_status():
             'bigram_size': 0,
             'trigram_size': 0,
             'dataset_exists': False,
+            'chunk_count': 0,
+            'chunk_files': [],
             'error': str(e)
         })
 
@@ -150,24 +178,18 @@ if __name__ == '__main__':
             except Exception as e:
                 print(f"Could not load model from {model_path}: {e}")
     
-    # Auto-train on startup if dataset exists and model not trained
+    # Auto-train on startup if chunk files exist and model not trained
     if not autocompleter.is_trained:
-        csv_path = os.path.join('dataset', 'data.csv')
-        if os.path.exists(csv_path):
-            try:
-                print("Auto-training model on startup...")
-                df = pd.read_csv(csv_path)
-                if 'text' in df.columns:
-                    texts = df['text'].dropna().astype(str).tolist()
-                    if len(texts) >= 10:
-                        autocompleter.train_models(texts)
-                        print(f"Auto-trained model with {len(texts)} samples")
-                    else:
-                        print(f"Not enough samples for auto-training: {len(texts)}")
-                else:
-                    print("Dataset missing 'text' column")
-            except Exception as e:
-                print(f"Auto-training failed: {e}")
+        try:
+            print("Auto-training model on startup...")
+            texts, chunk_count, total_rows = load_chunk_files()
+            if len(texts) >= 10:
+                autocompleter.train_models(texts)
+                print(f"Auto-trained model with {len(texts)} samples from {chunk_count} chunks")
+            else:
+                print(f"Not enough samples for auto-training: {len(texts)}")
+        except Exception as e:
+            print(f"Auto-training failed: {e}")
     
     print("Starting Flask application...")
     port = int(os.environ.get('PORT', 5000))

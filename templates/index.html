@@ -129,8 +129,11 @@
         <div class="section">
             <h2>📚 Train Model</h2>
             <div class="dataset-info">
-                <strong>Dataset:</strong> Using <code>dataset/data.csv</code><br>
-                <small>The model will be trained using the pre-existing dataset file.</small>
+                <strong>Dataset:</strong> Using chunk files in <code>dataset/</code> folder<br>
+                <small>The model will be trained using all chunk_*.csv files found in the dataset folder.</small>
+                <div id="chunk-info" style="margin-top: 10px; font-size: 12px; color: #666;">
+                    Loading chunk information...
+                </div>
             </div>
             
             <button id="train-btn" onclick="trainModel()">Train Model</button>
@@ -314,10 +317,17 @@
                 let statusHtml = '';
                 
                 // Dataset status
-                if (status.dataset_exists) {
-                    statusHtml += '<span style="color: green;">📁 Dataset file found</span><br>';
+                if (status.dataset_exists && status.chunk_count > 0) {
+                    statusHtml += `<span style="color: green;">📁 Found ${status.chunk_count} chunk files</span><br>`;
+                    
+                    // Update chunk info
+                    const chunkInfoDiv = document.getElementById('chunk-info');
+                    if (chunkInfoDiv && status.chunk_files) {
+                        chunkInfoDiv.innerHTML = `Files: ${status.chunk_files.join(', ')}`;
+                    }
                 } else {
-                    statusHtml += '<span style="color: red;">❌ Dataset file not found at dataset/data.csv</span><br>';
+                    statusHtml += '<span style="color: red;">❌ No chunk files found in dataset/ folder</span><br>';
+                    statusHtml += '<small>Expected files like: chunk_1.csv, chunk_2.csv, etc.</small><br>';
                 }
                 
                 // Model status
