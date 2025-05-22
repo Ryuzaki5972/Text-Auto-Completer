@@ -1,34 +1,68 @@
 from flask import Flask, request, jsonify, render_template
-import pandas as pd
-from TextAutoCompleter import TextAutoCompleter
 import os
-import tempfile
-import traceback
 import sys
-import glob
+import traceback
 
 app = Flask(__name__)
 
-# Initialize the autocompleter
-autocompleter = TextAutoCompleter()
+# Initialize the autocompleter as None - will be loaded from pickle file
+autocompleter = None
+
+def load_pretrained_model():
+    """Load the pre-trained model from trained_model.pkl"""
+    global autocompleter
+    
+    if autocompleter is not None:
+        return autocompleter
+        
+    try:
+        # Import here to avoid startup issues
+        from TextAutoCompleter import TextAutoCompleter
+        
+        # Look for trained_model.pkl in current directory
+        model_path = 'trained_model.pkl'
+        
+        if not os.path.exists(model_path):
+            print(f"Error: {model_path} not found in current directory")
+            print(f"Current directory contents: {os.listdir('.')}")
+            return None
+            
+        print(f"Loading pre-trained model from {model_path}...")
+        autocompleter = TextAutoCompleter()
+        autocompleter.load_models(model_path)
+        print("✅ Pre-trained model loaded successfully!")
+        print(f"Model stats - Unigrams: {len(autocompleter.unigram_model)}, Bigrams: {len(autocompleter.bigram_model)}, Trigrams: {len(autocompleter.trigram_model)}")
+        
+        return autocompleter
+        
+    except Exception as e:
+        print(f"❌ Failed to load pre-trained model: {str(e)}")
+        traceback.print_exc()
+        return None
 
 @app.route('/')
 def index():
-    return render_template("index.html", autocompleter=autocompleter)
+    completer = load_pretrained_model()
+    return render_template("index.html", autocompleter=completer)
 
 @app.route('/complete', methods=['POST'])
 def complete_text():
     try:
+        completer = load_pretrained_model()
+        
+        if completer is None:
+            return jsonify({'suggestions': [], 'error': 'Pre-trained model not available'})
+            
         data = request.get_json()
         if not data:
             return jsonify({'suggestions': [], 'error': 'No data provided'})
             
         text = data.get('text', '')
         
-        if not autocompleter.is_trained:
-            return jsonify({'suggestions': [], 'error': 'Model not trained'})
+        if not completer.is_trained:
+            return jsonify({'suggestions': [], 'error': 'Model not properly loaded'})
         
-        suggestions = autocompleter.complete_text(text, max_completions=8)
+        suggestions = completer.complete_text(text, max_completions=8)
         return jsonify({'suggestions': suggestions})
     
     except Exception as e:
@@ -36,121 +70,72 @@ def complete_text():
         traceback.print_exc()
         return jsonify({'suggestions': [], 'error': str(e)})
 
-def load_chunk_files():
-    """Load all chunk files from dataset folder"""
-    dataset_folder = 'dataset'
-    
-    if not os.path.exists(dataset_folder):
-        raise FileNotFoundError(f'Dataset folder not found at {dataset_folder}')
-    
-    # Find all chunk files (chunk_1.csv, chunk_2.csv, etc.)
-    chunk_pattern = os.path.join(dataset_folder, 'chunk_*.csv')
-    chunk_files = sorted(glob.glob(chunk_pattern), key=lambda x: int(x.split('chunk_')[1].split('.')[0]))
-    
-    if not chunk_files:
-        raise FileNotFoundError(f'No chunk files found in {dataset_folder}. Expected files like chunk_1.csv, chunk_2.csv, etc.')
-    
-    print(f"Found {len(chunk_files)} chunk files: {[os.path.basename(f) for f in chunk_files]}", file=sys.stderr)
-    
-    all_texts = []
-    total_rows = 0
-    
-    for chunk_file in chunk_files:
-        try:
-            print(f"Loading {os.path.basename(chunk_file)}...", file=sys.stderr)
-            df = pd.read_csv(chunk_file)
-            
-            # Check for required column in first chunk
-            if len(all_texts) == 0 and 'text' not in df.columns:
-                available_cols = ', '.join(df.columns.tolist())
-                raise ValueError(f'CSV files must contain a "text" column. Available columns in {os.path.basename(chunk_file)}: {available_cols}')
-            
-            # Extract text data
-            if 'text' in df.columns:
-                chunk_texts = df['text'].dropna().astype(str).tolist()
-                all_texts.extend(chunk_texts)
-                total_rows += len(df)
-                print(f"  - Loaded {len(chunk_texts)} texts from {os.path.basename(chunk_file)}", file=sys.stderr)
-            else:
-                print(f"  - Warning: {os.path.basename(chunk_file)} missing 'text' column, skipping", file=sys.stderr)
-                
-        except Exception as e:
-            print(f"Error loading {chunk_file}: {str(e)}", file=sys.stderr)
-            continue
-    
-    print(f"Total texts loaded: {len(all_texts)} from {len(chunk_files)} chunks", file=sys.stderr)
-    return all_texts, len(chunk_files), total_rows
-
-@app.route('/train', methods=['POST'])
-def train_model():
-    try:
-        print("Training request received", file=sys.stderr)
-        
-        try:
-            texts, chunk_count, total_rows = load_chunk_files()
-        except Exception as load_error:
-            error_msg = str(load_error)
-            print(f"Error loading chunk files: {error_msg}", file=sys.stderr)
-            return jsonify({'success': False, 'error': error_msg})
-        
-        if len(texts) < 10:
-            error_msg = f'Need at least 10 text samples to train. Found {len(texts)} samples across {chunk_count} chunks.'
-            print(error_msg, file=sys.stderr)
-            return jsonify({'success': False, 'error': error_msg})
-        
-        # Train the model
-        print("Starting model training...", file=sys.stderr)
-        autocompleter.train_models(texts)
-        print("Model training completed", file=sys.stderr)
-        
-        # Try to save the trained model
-        try:
-            model_path = os.path.join(tempfile.gettempdir(), 'trained_model.pkl')
-            autocompleter.save_models(model_path)
-            print(f"Model saved to {model_path}", file=sys.stderr)
-        except Exception as save_error:
-            print(f"Warning: Could not save model to disk: {save_error}", file=sys.stderr)
-        
-        success_msg = f'Model trained successfully on {len(texts)} text samples from {chunk_count} chunk files'
-        print(success_msg, file=sys.stderr)
-        return jsonify({'success': True, 'message': success_msg})
-    
-    except Exception as e:
-        error_msg = f"Training failed: {str(e)}"
-        print(f"Training error: {error_msg}", file=sys.stderr)
-        traceback.print_exc()
-        return jsonify({'success': False, 'error': error_msg})
-
 @app.route('/status')
 def model_status():
     try:
-        # Check dataset files
-        dataset_folder = 'dataset'
-        chunk_pattern = os.path.join(dataset_folder, 'chunk_*.csv')
-        chunk_files = glob.glob(chunk_pattern)
-        dataset_exists = len(chunk_files) > 0
+        completer = load_pretrained_model()
         
-        return jsonify({
-            'is_trained': autocompleter.is_trained,
-            'unigram_size': len(autocompleter.unigram_model),
-            'bigram_size': len(autocompleter.bigram_model),
-            'trigram_size': len(autocompleter.trigram_model),
-            'dataset_exists': dataset_exists,
-            'chunk_count': len(chunk_files),
-            'chunk_files': [os.path.basename(f) for f in sorted(chunk_files, key=lambda x: int(x.split('chunk_')[1].split('.')[0]))]
-        })
+        model_path = 'trained_model.pkl'
+        model_exists = os.path.exists(model_path)
+        
+        if completer and completer.is_trained:
+            return jsonify({
+                'is_trained': True,
+                'model_source': 'Pre-trained model (trained_model.pkl)',
+                'unigram_size': len(completer.unigram_model),
+                'bigram_size': len(completer.bigram_model),
+                'trigram_size': len(completer.trigram_model),
+                'model_file_exists': model_exists,
+                'training_method': 'N-gram models with interpolation smoothing'
+            })
+        else:
+            return jsonify({
+                'is_trained': False,
+                'model_source': 'trained_model.pkl not found or failed to load',
+                'unigram_size': 0,
+                'bigram_size': 0,
+                'trigram_size': 0,
+                'model_file_exists': model_exists,
+                'error': 'Pre-trained model not available'
+            })
+            
     except Exception as e:
         print(f"Status error: {str(e)}", file=sys.stderr)
         return jsonify({
             'is_trained': False,
+            'model_source': 'Error loading model',
             'unigram_size': 0,
             'bigram_size': 0,
             'trigram_size': 0,
-            'dataset_exists': False,
-            'chunk_count': 0,
-            'chunk_files': [],
+            'model_file_exists': False,
             'error': str(e)
         })
+
+@app.route('/model-info')
+def model_info():
+    """Endpoint to get information about how the model was trained"""
+    return jsonify({
+        'training_method': 'N-gram Language Models with Linear Interpolation',
+        'model_type': 'Unigram + Bigram + Trigram with smoothing',
+        'smoothing': 'Laplace (Add-1) Smoothing + Linear Interpolation',
+        'preprocessing': [
+            'Text cleaning (remove punctuation, non-ASCII)',
+            'Stopword removal',
+            'Lowercasing',
+            'Number normalization (<NUM> tokens)',
+            'Contraction expansion',
+            'Lemmatization using WordNet',
+            'Tokenization'
+        ],
+        'interpolation_weights': {
+            'trigram_lambda': 0.749,
+            'bigram_lambda': 0.010, 
+            'unigram_lambda': 0.241
+        },
+        'training_corpus': 'Text dataset processed into n-grams',
+        'vocabulary_filtering': 'Minimum threshold filtering for rare n-grams',
+        'model_size': 'Depends on training corpus size and vocabulary'
+    })
 
 @app.errorhandler(Exception)
 def handle_exception(e):
@@ -160,37 +145,31 @@ def handle_exception(e):
 
 @app.before_request
 def log_request_info():
-    print(f"Request: {request.method} {request.url}", file=sys.stderr)
+    if request.endpoint != 'static':
+        print(f"Request: {request.method} {request.url}", file=sys.stderr)
+
+# Health check endpoint for deployment
+@app.route('/health')
+def health_check():
+    return jsonify({
+        'status': 'healthy', 
+        'model_loaded': autocompleter is not None and (autocompleter.is_trained if hasattr(autocompleter, 'is_trained') else False)
+    })
 
 if __name__ == '__main__':
-    # Try to load existing model if available
-    model_paths = [
-        'trained_model.pkl',
-        os.path.join(tempfile.gettempdir(), 'trained_model.pkl')
-    ]
+    print("🚀 Starting Text Auto Completer with Pre-trained Model...")
     
-    for model_path in model_paths:
-        if os.path.exists(model_path):
-            try:
-                autocompleter.load_models(model_path)
-                print(f"Loaded existing trained model from {model_path}")
-                break
-            except Exception as e:
-                print(f"Could not load model from {model_path}: {e}")
+    # Load model on startup to check if it works
+    completer = load_pretrained_model()
+    if completer:
+        print("✅ Model check passed - ready to serve requests")
+    else:
+        print("⚠️  Model not loaded - app will run but autocomplete won't work")
+        print("📋 Make sure 'trained_model.pkl' is in the same directory as app.py")
     
-    # Auto-train on startup if chunk files exist and model not trained
-    if not autocompleter.is_trained:
-        try:
-            print("Auto-training model on startup...")
-            texts, chunk_count, total_rows = load_chunk_files()
-            if len(texts) >= 10:
-                autocompleter.train_models(texts)
-                print(f"Auto-trained model with {len(texts)} samples from {chunk_count} chunks")
-            else:
-                print(f"Not enough samples for auto-training: {len(texts)}")
-        except Exception as e:
-            print(f"Auto-training failed: {e}")
-    
-    print("Starting Flask application...")
+    # Get port from environment (important for Render)
     port = int(os.environ.get('PORT', 5000))
-    app.run(host='0.0.0.0', port=port, debug=True)
+    debug_mode = os.environ.get('FLASK_ENV') != 'production'
+    
+    print(f"🌐 Starting server on port {port}")
+    app.run(host='0.0.0.0', port=port, debug=debug_mode)

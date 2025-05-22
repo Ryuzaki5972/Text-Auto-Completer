@@ -104,12 +104,31 @@
             border-radius: 5px;
             margin-bottom: 20px;
         }
-        .dataset-info {
+        .training-info {
             background-color: #f8f9fa;
-            padding: 10px;
+            padding: 15px;
             border-radius: 5px;
-            margin-bottom: 10px;
+            margin-bottom: 20px;
             font-size: 14px;
+        }
+        .training-info h4 {
+            color: #495057;
+            margin-top: 0;
+            margin-bottom: 10px;
+        }
+        .training-info ul {
+            margin: 8px 0;
+            padding-left: 20px;
+        }
+        .training-info li {
+            margin: 4px 0;
+        }
+        .code {
+            background-color: #f1f1f1;
+            padding: 2px 4px;
+            border-radius: 3px;
+            font-family: monospace;
+            font-size: 12px;
         }
     </style>
 </head>
@@ -125,26 +144,18 @@
             </div>
         </div>
 
-        <!-- Training Section -->
-        <div class="section">
-            <h2>📚 Train Model</h2>
-            <div class="dataset-info">
-                <strong>Dataset:</strong> Using chunk files in <code>dataset/</code> folder<br>
-                <small>The model will be trained using all chunk_*.csv files found in the dataset folder.</small>
-                <div id="chunk-info" style="margin-top: 10px; font-size: 12px; color: #666;">
-                    Loading chunk information...
-                </div>
+        <!-- Training Information -->
+        <div class="training-info">
+            <h4>🧠 How This Model Was Trained</h4>
+            <div id="training-details">
+                Loading training information...
             </div>
-            
-            <button id="train-btn" onclick="trainModel()">Train Model</button>
-            
-            <div id="training-status"></div>
         </div>
 
         <!-- Text Completion Section -->
         <div class="section">
             <h2>✍️ Text Completion</h2>
-            <p>Start typing to get word suggestions:</p>
+            <p>Start typing to get intelligent word suggestions based on our trained n-gram language model:</p>
             
             <textarea 
                 id="text-input" 
@@ -175,49 +186,6 @@
             } catch (e) {
                 console.log('Failed to parse JSON:', e);
                 throw new Error(`Server returned invalid JSON: ${text.substring(0, 200)}...`);
-            }
-        }
-
-        // Train model function
-        async function trainModel() {
-            const trainBtn = document.getElementById('train-btn');
-            const statusDiv = document.getElementById('training-status');
-            
-            trainBtn.disabled = true;
-            trainBtn.textContent = 'Training...';
-            showStatus('Training model with dataset/data.csv...', 'info');
-            
-            try {
-                console.log('Sending training request...');
-                const response = await fetch('/train', {
-                    method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json',
-                    }
-                });
-                
-                console.log('Response status:', response.status);
-                
-                if (!response.ok) {
-                    throw new Error(`HTTP ${response.status}: ${response.statusText}`);
-                }
-                
-                const result = await safeJsonParse(response);
-                console.log('Training result:', result);
-                
-                if (result.success) {
-                    showStatus(result.message, 'success');
-                    // Refresh model status
-                    setTimeout(updateModelStatus, 1000);
-                } else {
-                    showStatus(result.error || 'Training failed', 'error');
-                }
-            } catch (error) {
-                console.error('Training error:', error);
-                showStatus('Error: ' + error.message, 'error');
-            } finally {
-                trainBtn.disabled = false;
-                trainBtn.textContent = 'Train Model';
             }
         }
 
@@ -290,17 +258,6 @@
             getSuggestions();
         }
 
-        function showStatus(message, type) {
-            const statusDiv = document.getElementById('training-status');
-            statusDiv.innerHTML = `<div class="status ${type}">${message}</div>`;
-            
-            if (type === 'success') {
-                setTimeout(() => {
-                    statusDiv.innerHTML = '';
-                }, 5000);
-            }
-        }
-
         // Update model status
         async function updateModelStatus() {
             try {
@@ -316,43 +273,31 @@
                 
                 let statusHtml = '';
                 
-                // Dataset status
-                if (status.dataset_exists && status.chunk_count > 0) {
-                    statusHtml += `<span style="color: green;">📁 Found ${status.chunk_count} chunk files</span><br>`;
-                    
-                    // Update chunk info
-                    const chunkInfoDiv = document.getElementById('chunk-info');
-                    if (chunkInfoDiv && status.chunk_files) {
-                        chunkInfoDiv.innerHTML = `Files: ${status.chunk_files.join(', ')}`;
-                    }
-                } else {
-                    statusHtml += '<span style="color: red;">❌ No chunk files found in dataset/ folder</span><br>';
-                    statusHtml += '<small>Expected files like: chunk_1.csv, chunk_2.csv, etc.</small><br>';
-                }
-                
-                // Model status
                 if (status.is_trained) {
                     statusHtml += `
-                        <span style="color: green;">✅ Model is trained and ready!</span>
+                        <span style="color: green;">✅ Pre-trained model loaded successfully!</span>
                         <br>
                         <small>
-                            Vocabulary: ${status.unigram_size} words |
-                            Bigrams: ${status.bigram_size} |
-                            Trigrams: ${status.trigram_size}
+                            <strong>Source:</strong> ${status.model_source}<br>
+                            <strong>Vocabulary:</strong> ${status.unigram_size.toLocaleString()} words |
+                            <strong>Bigrams:</strong> ${status.bigram_size.toLocaleString()} |
+                            <strong>Trigrams:</strong> ${status.trigram_size.toLocaleString()}
                         </small>
                     `;
                     
-                    // Enable text input and update suggestions
+                    // Enable text input
                     textInput.disabled = false;
                     textInput.placeholder = "Start typing here...";
                     if (textInput.value.trim() === '') {
                         suggestionsContainer.innerHTML = '<em>Start typing to see suggestions...</em>';
                     }
                 } else {
-                    statusHtml += '<span style="color: orange;">⚠️ Model not trained. Click "Train Model" to train.</span>';
+                    statusHtml += `<span style="color: red;">❌ Pre-trained model not available</span><br>`;
+                    statusHtml += `<small>Error: ${status.error || 'trained_model.pkl not found'}</small>`;
+                    
                     textInput.disabled = true;
-                    textInput.placeholder = "Please train the model first...";
-                    suggestionsContainer.innerHTML = '<em>Please train the model first to get suggestions.</em>';
+                    textInput.placeholder = "Model not available...";
+                    suggestionsContainer.innerHTML = '<em>Pre-trained model not loaded. Please check server logs.</em>';
                 }
                 
                 modelStatusDiv.innerHTML = statusHtml;
@@ -364,11 +309,55 @@
             }
         }
 
-        // Initialize model status on page load
+        // Load model training information
+        async function loadTrainingInfo() {
+            try {
+                const response = await fetch('/model-info');
+                
+                if (!response.ok) {
+                    throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+                }
+                
+                const info = await safeJsonParse(response);
+                
+                const trainingDetailsDiv = document.getElementById('training-details');
+                
+                let detailsHtml = `
+                    <p><strong>Model Type:</strong> ${info.model_type}</p>
+                    <p><strong>Training Method:</strong> ${info.training_method}</p>
+                    
+                    <p><strong>Text Preprocessing Pipeline:</strong></p>
+                    <ul>
+                        ${info.preprocessing.map(step => `<li>${step}</li>`).join('')}
+                    </ul>
+                    
+                    <p><strong>Smoothing Technique:</strong> ${info.smoothing}</p>
+                    
+                    <p><strong>Interpolation Weights:</strong></p>
+                    <ul>
+                        <li>Trigram λ₁ = ${info.interpolation_weights.trigram_lambda}</li>
+                        <li>Bigram λ₂ = ${info.interpolation_weights.bigram_lambda}</li>
+                        <li>Unigram λ₃ = ${info.interpolation_weights.unigram_lambda}</li>
+                    </ul>
+                    
+                    <p><strong>Model File:</strong> <span class="code">trained_model.pkl</span> (contains all n-gram probabilities)</p>
+                `;
+                
+                trainingDetailsDiv.innerHTML = detailsHtml;
+                
+            } catch (error) {
+                console.error('Error loading training info:', error);
+                document.getElementById('training-details').innerHTML = 
+                    '<em>Error loading training information</em>';
+            }
+        }
+
+        // Initialize on page load
         document.addEventListener('DOMContentLoaded', function() {
             updateModelStatus();
+            loadTrainingInfo();
             // Check status periodically
-            setInterval(updateModelStatus, 10000);
+            setInterval(updateModelStatus, 30000); // Every 30 seconds
         });
     </script>
 </body>
